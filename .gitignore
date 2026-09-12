@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.prbx
+*.dec
+.dart_tool/
+build/

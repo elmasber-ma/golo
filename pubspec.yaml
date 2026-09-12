@@ -1,0 +1,7 @@
+name: golo_vault
+description: CLI espejo CryptoVault mimapp
+version: 0.1.0
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+dependencies:
+  cryptography: ^2.7.0
