@@ -1,0 +1,72 @@
+"""download.py - espejo Python de kurweb.gd _stream_download/_stream_download_thread.
+
+- Sigue redirects manual: max 10, codigos 301/302/303/307/308 via header Location
+- UA: GodotDownloader/1.0 (igual que kurweb.gd)
+- filename: Content-Disposition filename=, si no basename de URL, si no download.zip
+- guarda por chunks en disco (streaming, sin cargar todo en RAM)
+- crea el dir destino recursivo
+"""
+from __future__ import annotations
+import os
+import re
+import urllib.parse
+import urllib.request
+
+UA = "GodotDownloader/1.0"
+MAX_REDIRECTS = 10
+CHUNK = 1024 * 64
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _filename(headers, url: str) -> str:
+    cd = headers.get("Content-Disposition", "")
+    if cd and "filename=" in cd:
+        name = cd.split("filename=")[-1].strip().strip('"').strip("'")
+        if name:
+            return name
+    path = urllib.parse.urlparse(url).path
+    name = os.path.basename(path.rstrip("/"))
+    name = name.split("?")[0]
+    return name or "download.zip"
+
+
+def download(url: str, dest_dir: str, filename: str = "") -> str:
+    """Descarga url (cdn, git, link generado) en dest_dir. Retorna ruta final."""
+    os.makedirs(dest_dir, exist_ok=True)
+    opener = urllib.request.build_opener(_NoRedirect)
+    current = url
+    for _ in range(MAX_REDIRECTS):
+        req = urllib.request.Request(current, method="GET",
+                                     headers={"User-Agent": UA})
+        try:
+            resp = opener.open(req, timeout=60)
+        except urllib.error.HTTPError as e:
+            if e.code in (301, 302, 303, 307, 308):
+                loc = e.headers.get("Location", "").strip()
+                if not loc:
+                    raise RuntimeError("redirect sin Location")
+                current = urllib.parse.urljoin(current, loc)
+                continue
+            raise
+        if resp.status in (301, 302, 303, 307, 308):
+            loc = resp.headers.get("Location", "").strip()
+            resp.close()
+            if not loc:
+                raise RuntimeError("redirect sin Location")
+            current = urllib.parse.urljoin(current, loc)
+            continue
+        name = filename or _filename(resp.headers, current)
+        out = os.path.join(dest_dir, name)
+        with open(out, "wb") as f:
+            while True:
+                chunk = resp.read(CHUNK)
+                if not chunk:
+                    break
+                f.write(chunk)
+        resp.close()
+        return out
+    raise RuntimeError("demasiados redirects")
