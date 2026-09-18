@@ -58,8 +58,61 @@ Future<Uint8List?> decrypt(Uint8List data, String pass) async {
   }
 }
 
-void main(List<String> args) async {
-  if (args.length < 3) {
+/// Lote v2: `global(cdn_pass + cdn)` = UN solo PRBX con el maestro
+/// sobre pass pegada + contenido:
+/// `PRBX(maestro, [LOTE][u32be len][pass][datos])`.
+/// v1: PRBX directo (sin pass de lote).
+/// El pass global descifra TODO: pass + dato origen.
+class LoteAbierto {
+  final int version; // 1 o 2
+  final String passLote; // '' en v1
+  final Uint8List contenido;
+  const LoteAbierto({
+    required this.version,
+    required this.passLote,
+    required this.contenido,
+  });
+}
+
+/// Cifra un lote v2: `global(cdn_pass + cdn)` con el maestro.
+/// Lo abre `decryptLote` (y el preset de Colab lo genera igual).
+Future<Uint8List> encryptLote(
+    Uint8List datos, String passMaestro, String passLote) async {
+  final pb = utf8.encode(passLote);
+  final plano = BytesBuilder()
+    ..add([0x4C, 0x4F, 0x54, 0x45]) // LOTE
+    ..add([(pb.length >> 24) & 0xFF, (pb.length >> 16) & 0xFF,
+        (pb.length >> 8) & 0xFF, pb.length & 0xFF])
+    ..add(pb)
+    ..add(datos);
+  return encrypt(plano.toBytes(), passMaestro);
+}
+
+Future<LoteAbierto?> decryptLote(Uint8List data, String passMaestro) async {  try {
+    final pt = await decrypt(data, passMaestro);
+    if (pt == null) return null;
+    // v2: marca LOTE al inicio del claro.
+    if (pt.length >= 8 &&
+        pt[0] == 0x4C &&
+        pt[1] == 0x4F &&
+        pt[2] == 0x54 &&
+        pt[3] == 0x45) {
+      final len =
+          ByteData.sublistView(pt, 4, 8).getUint32(0, Endian.big);
+      if (len <= 0 || pt.length < 8 + len) return null;
+      final passLote =
+          utf8.decode(Uint8List.sublistView(pt, 8, 8 + len));
+      final contenido = Uint8List.sublistView(pt, 8 + len);
+      return LoteAbierto(
+          version: 2, passLote: passLote, contenido: contenido);
+    }
+    return LoteAbierto(version: 1, passLote: '', contenido: pt);
+  } catch (_) {
+    return null;
+  }
+}
+
+void main(List<String> args) async {  if (args.length < 3) {
     print('Uso: dart run vault.dart enc|dec <pass> <src> [dst]');
     exit(1);
   }

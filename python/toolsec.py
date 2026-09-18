@@ -13,6 +13,7 @@ si no usa implementacion pura-python (lenta pero sin dependencias).
 """
 from __future__ import annotations
 import hashlib
+import os
 import secrets
 
 MAGIC = b"PRBX"
@@ -32,6 +33,15 @@ def _derive_key(passphrase: str, salt: bytes) -> bytes:
 
 
 # ---------------------------------------------------------------- AES-GCM
+def _has_lib() -> bool:
+    """True si está `cryptography` (motor C, streaming)."""
+    try:
+        import cryptography.hazmat.primitives.ciphers  # noqa
+        return True
+    except ImportError:
+        return False
+
+
 def _aesgcm_encrypt(key: bytes, nonce: bytes, plain: bytes) -> bytes:
     """Retorna ciphertext+tag(16). Intenta cryptography, si no puro-python."""
     try:
@@ -229,6 +239,31 @@ def decrypt(data: bytes, passphrase: str) -> bytes | None:
         return None
 
 
+# ---------------------------------------------------------------- lote v2
+# global(cdn_pass + cdn): UN solo PRBX con el maestro sobre
+# pass pegada + contenido: PRBX(maestro, [LOTE][u32be len][pass][datos]).
+import struct as _struct
+
+
+def encrypt_lote(datos: bytes, maestro: str, pass_lote: str) -> bytes:
+    pb = pass_lote.encode("utf-8")
+    plano = b"LOTE" + _struct.pack(">I", len(pb)) + pb + bytes(datos)
+    return encrypt(plano, maestro)
+
+
+def decrypt_lote(data: bytes, maestro: str) -> tuple[str, bytes] | None:
+    """Retorna (pass_lote, contenido). v1 -> ('', contenido)."""
+    pt = decrypt(bytes(data), maestro)
+    if pt is None:
+        return None
+    if len(pt) >= 8 and pt[:4] == b"LOTE":
+        (ln,) = _struct.unpack(">I", pt[4:8])
+        if ln <= 0 or len(pt) < 8 + ln:
+            return None
+        return (pt[8:8 + ln].decode("utf-8"), pt[8 + ln:])
+    return ("", pt)
+
+
 class Vault:
     """API simple, misma semantica que CryptoVault Dart."""
     def __init__(self, passphrase: str):
@@ -249,6 +284,28 @@ class Vault:
             f.write(enc)
         return out
 
+    def encrypt_file_stream(self, src: str, dst: str | None = None,
+                            tramo: int = 1024 * 1024) -> str:
+        """Cifra por tramos, RAM constante. Mismo envelope v1 (Dart lo abre).
+        Sin lib C usa el método entero (lento, solo archivos chicos)."""
+        out = dst or (src + ".prbx")
+        if not _has_lib():
+            return self.encrypt_file(src, out)
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        salt = secrets.token_bytes(SALT_LEN)
+        nonce = secrets.token_bytes(NONCE_LEN)
+        key = _derive_key(self.passphrase, salt)
+        enc = Cipher(algorithms.AES(key), modes.GCM(nonce)).encryptor()
+        with open(src, "rb") as fin, open(out, "wb") as fout:
+            fout.write(MAGIC + bytes([VERSION]) + salt + nonce)
+            while True:
+                trozo = fin.read(tramo)
+                if not trozo:
+                    break
+                fout.write(enc.update(bytes(trozo)))
+            fout.write(enc.finalize() + enc.tag)
+        return out
+
     def decrypt_file(self, src: str, dst: str | None = None) -> str | None:
         with open(src, "rb") as f:
             raw = f.read()
@@ -259,4 +316,75 @@ class Vault:
             dst = src[:-5] if src.endswith(".prbx") else (src + ".dec")
         with open(dst, "wb") as f:
             f.write(pt)
+        return dst
+
+    def encrypt_lote_file(self, src: str, maestro: str, pass_lote: str,
+                          dst: str | None = None) -> str:
+        """Lote v2: pass pegada + contenido, todo con el maestro."""
+        with open(src, "rb") as f:
+            raw = f.read()
+        out = dst or (src + ".prbx")
+        with open(out, "wb") as f:
+            f.write(encrypt_lote(raw, maestro, pass_lote))
+        return out
+
+    def decrypt_lote_file(self, src: str, maestro: str,
+                          dst: str | None = None) -> tuple[str, str] | None:
+        """Abre lote v1/v2. Retorna (pass_lote, path_contenido)."""
+        with open(src, "rb") as f:
+            raw = f.read()
+        r = decrypt_lote(raw, maestro)
+        if r is None:
+            return None
+        pass_lote, contenido = r
+        if dst is None:
+            dst = src[:-5] if src.endswith(".prbx") else (src + ".dec")
+        with open(dst, "wb") as f:
+            f.write(contenido)
+        return (pass_lote, dst)
+
+    def decrypt_file_stream(self, src: str, dst: str | None = None,
+                            tramo: int = 1024 * 1024) -> str | None:
+        """Descifra por tramos, RAM constante. Sin lib C usa el entero."""
+        if dst is None:
+            dst = src[:-5] if src.endswith(".prbx") else (src + ".dec")
+        if not _has_lib():
+            return self.decrypt_file(src, dst)
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        total = os.path.getsize(src)
+        cabeza = 4 + 1 + SALT_LEN + NONCE_LEN
+        if total < cabeza + TAG_LEN:
+            return None
+        with open(src, "rb") as fin:
+            mag = fin.read(4)
+            ver = fin.read(1)
+            if mag != MAGIC or not ver or ver[0] != VERSION:
+                return None
+            salt = fin.read(SALT_LEN)
+            nonce = fin.read(NONCE_LEN)
+            key = _derive_key(self.passphrase, salt)
+            # El tag va al final: se lee primero y entra en el modo.
+            fin.seek(total - TAG_LEN)
+            tag = fin.read(TAG_LEN)
+            if len(tag) != TAG_LEN:
+                return None
+            fin.seek(cabeza)
+            dec = Cipher(
+                algorithms.AES(key), modes.GCM(nonce, tag)).decryptor()
+            try:
+                with open(dst, "wb") as fout:
+                    queda = total - cabeza - TAG_LEN
+                    while queda > 0:
+                        trozo = fin.read(min(tramo, queda))
+                        if not trozo:
+                            raise ValueError("corte")
+                        queda -= len(trozo)
+                        fout.write(dec.update(trozo))
+                    fout.write(dec.finalize())
+            except Exception:
+                try:
+                    os.remove(dst)
+                except OSError:
+                    pass
+                return None
         return dst
