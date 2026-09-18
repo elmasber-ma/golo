@@ -112,11 +112,55 @@ Future<LoteAbierto?> decryptLote(Uint8List data, String passMaestro) async {  tr
   }
 }
 
-void main(List<String> args) async {  if (args.length < 3) {
+void main(List<String> args) async {
+  if (args.isEmpty) {
+    print('Uso: dart run vault.dart enc|dec <pass> <src> [dst]');
+    print('     dart run vault.dart enc-lote <maestro> <pass> <src> [dst]');
+    print('     dart run vault.dart dec-lote <maestro> <src.prbx> [dst]');
+    exit(1);
+  }
+  final cmd = args[0];
+  if (cmd == 'enc-lote') {
+    if (args.length < 4) {
+      print('Uso: dart run vault.dart enc-lote <maestro> <pass> <src> [dst]');
+      exit(1);
+    }
+    final maestro = args[1], pass = args[2], src = args[3];
+    final dst = args.length > 4 ? args[4] : null;
+    final plain = await File(src).readAsBytes();
+    final enc = await encryptLote(plain, maestro, pass);
+    final out = dst ?? '$src.prbx';
+    await File(out).writeAsBytes(enc);
+    print('OK lote v2 -> $out (${enc.length} bytes)');
+    return;
+  }
+  if (cmd == 'dec-lote') {
+    if (args.length < 3) {
+      print('Uso: dart run vault.dart dec-lote <maestro> <src.prbx> [dst]');
+      exit(1);
+    }
+    final maestro = args[1], src = args[2];
+    final dst = args.length > 3 ? args[3] : null;
+    final data = await File(src).readAsBytes();
+    final lote = await decryptLote(Uint8List.fromList(data), maestro);
+    if (lote == null) {
+      print('FALLO: pass incorrecta o datos alterados');
+      exit(2);
+    }
+    final out = dst ??
+        (src.endsWith('.prbx')
+            ? src.substring(0, src.length - 5)
+            : '$src.dec');
+    await File(out).writeAsBytes(lote.contenido);
+    print('OK lote v${lote.version} -> $out '
+        '(${lote.contenido.length} bytes) pass=${lote.passLote}');
+    return;
+  }
+  if (args.length < 3) {
     print('Uso: dart run vault.dart enc|dec <pass> <src> [dst]');
     exit(1);
   }
-  final cmd = args[0], pass = args[1], src = args[2];
+  final pass = args[1], src = args[2];
   final dst = args.length > 3 ? args[3] : null;
   if (cmd == 'enc') {
     final plain = await File(src).readAsBytes();
