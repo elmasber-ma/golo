@@ -318,6 +318,28 @@ class Vault:
             f.write(pt)
         return dst
 
+    def empaquetar_lote(self, pass_lote: str, src: str,
+                        dst: str) -> str:
+        """Pega pass + archivo: [LOTE][u32be len][pass][datos].
+
+        Streaming (RAM constante) y retorna el sha256 hex del
+        pegado: el nombre del .prbx sale de acá (estable, sigue
+        historial; el cifrado lleva sal al azar y nunca repite).
+        """
+        pb = pass_lote.encode("utf-8")
+        h = hashlib.sha256()
+        with open(src, "rb") as b, open(dst, "wb") as f:
+            head = b"LOTE" + _struct.pack(">I", len(pb)) + pb
+            h.update(head)
+            f.write(head)
+            while True:
+                t = b.read(1024 * 1024)
+                if not t:
+                    break
+                h.update(t)
+                f.write(t)
+        return h.hexdigest()
+
     def encrypt_lote_file(self, src: str, maestro: str, pass_lote: str,
                           dst: str | None = None) -> str:
         """Lote v2: pass pegada + contenido, todo con el maestro."""

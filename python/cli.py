@@ -2,6 +2,8 @@
 """CLI igual al CryptoVault de mimapp. Uso:
   python cli.py enc <pass> <src> [dst]   # cifra archivo -> .prbx
   python cli.py dec <pass> <src.prbx> [dst]  # descifra, verifica igualdad
+  python cli.py lote <pass_lote> <src> <dst>  # pega pass+datos -> dst,
+    imprime LOTE <sha256>: el .prbx se nombra con ese sha (estable).
 Archivos grandes van por tramos (RAM constante), mismo envelope.
 """
 import sys, getpass
@@ -27,8 +29,14 @@ def main():
             print("FALLO: pass incorrecta o datos alterados")
             sys.exit(2)
         print(f"OK descifrado -> {out}")
+    elif cmd == "lote":
+        if dst is None:
+            print("uso: cli.py lote <pass_lote> <src> <dst>")
+            sys.exit(1)
+        sha = v.empaquetar_lote(passphrase, src, dst)
+        print(f"LOTE {dst} {sha}")
     else:
-        print("cmd debe ser enc|dec")
+        print("cmd debe ser enc|dec|lote")
         sys.exit(1)
 
 if __name__ == "__main__":
