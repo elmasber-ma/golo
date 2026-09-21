@@ -9,7 +9,7 @@ import os
 
 def upload(token: str, local: str, repo_id: str, path_in_repo: str = ".",
            repo_type: str = "model", private: bool = False,
-           commit_message: str = "Upload via golo") -> str:
+           commit_message: str = "embeding chek") -> str:
     token = (token or os.getenv("HF_TOKEN") or "").strip()
     if not token:
         raise ValueError("falta token HF")
