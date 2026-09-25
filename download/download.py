@@ -22,8 +22,7 @@ UA = "GodotDownloader/1.0"
 MAX_REDIRECTS = 10
 CHUNK = 1024 * 64
 
-# Rango del relleno aleatorio.
-MB_MIN, MB_MAX = 10.0, 20.0
+# Relleno: temp.txt de 10 a 20MB sorteados (ver pad.mb_aleatorio).
 NOMBRE_RELLENO = "temp.txt"
 
 
@@ -44,33 +43,30 @@ def _filename(headers, url: str) -> str:
     return name or "download.zip"
 
 
-def empaquetar(ruta: str, mb: float = 15.0) -> str:
-    """Arma un zip con el archivo + el .txt de relleno.
+def empaquetar(ruta: str) -> str:
+    """Arma un zip con el archivo + el temp.txt de relleno (10-20MB).
 
     El txt va al vuelo con generar_stream (no se escribe en disco). Al final
     el crudo se borra y el zip queda con el MISMO nombre de la ruta, para que
     quien llamaba la descarga siga encontrando el archivo donde estaba y no
     haya que tocar el consumidor.
     """
-    if not MB_MIN <= mb <= MB_MAX:
-        raise ValueError(f"el relleno tiene que ir de {MB_MIN} a {MB_MAX} MB")
     tmp = ruta + ".tmp"
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.write(ruta, os.path.basename(ruta))
         with zf.open(NOMBRE_RELLENO, "w") as zf_txt:
-            for trozo in generar_stream(mb):
+            for trozo in generar_stream():
                 zf_txt.write(trozo)
     os.remove(ruta)
     os.replace(tmp, ruta)
     return ruta
 
 
-def download(url: str, dest_dir: str, filename: str = "", mb: float = 15.0,
-             zipear: bool = True) -> str:
-    """Descarga url (cdn, git, link generado) en dest_dir. Retorna ruta final.
+def download(url: str, dest_dir: str, filename: str = "") -> str:
+    """Descarga url (cdn, git, link generado) en dest_dir.
 
-    Con zipear=True (default) devuelve el .zip con el archivo + relleno, y el
-    crudo queda borrado. Con zipear=False devuelve el archivo como antes.
+    Siempre: baja, le pega un temp.txt de 10-20MB aleatorios, lo empaqueta
+    todo en un zip con el MISMO nombre, borra el crudo y devuelve esa ruta.
     """
     os.makedirs(dest_dir, exist_ok=True)
     opener = urllib.request.build_opener(_NoRedirect)
@@ -104,5 +100,5 @@ def download(url: str, dest_dir: str, filename: str = "", mb: float = 15.0,
                     break
                 f.write(chunk)
         resp.close()
-        return empaquetar(out, mb) if zipear else out
+        return empaquetar(out)
     raise RuntimeError("demasiados redirects")

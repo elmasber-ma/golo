@@ -11,6 +11,7 @@ verdad (no PRNG sembrado).
 from __future__ import annotations
 
 import os
+import random
 
 # Letras, digitos y signos. El salto de linea se mete aparte.
 ALFABETO = (
@@ -38,11 +39,18 @@ def _tabla() -> bytes:
 _TABLA = _tabla()
 
 
-def generar(destino: str, mb: float = 15.0) -> str:
-    """Escribe mb megas de texto aleatorio en destino. Devuelve la ruta."""
-    objetivo = int(mb * 1024 * 1024)
-    if objetivo <= 0:
-        raise ValueError("mb tiene que ser mayor a 0")
+# El relleno va de 10 a 20MB, sorteado cada vez.
+MB_MIN, MB_MAX = 10.0, 20.0
+
+
+def mb_aleatorio() -> float:
+    """Sortea el tamano del relleno, entre 10 y 20MB."""
+    return random.uniform(MB_MIN, MB_MAX)
+
+
+def generar(destino: str) -> str:
+    """Escribe el relleno de texto aleatorio (10-20MB) en destino."""
+    objetivo = int(mb_aleatorio() * 1024 * 1024)
     escritos = 0
     with open(destino, "wb") as f:
         while escritos < objetivo:
@@ -52,10 +60,10 @@ def generar(destino: str, mb: float = 15.0) -> str:
     return destino
 
 
-def generar_stream(mb: float = 15.0):
-    """Generador, para escribir el relleno directo dentro del zip sin
-    dejarlo en disco."""
-    quedan = int(mb * 1024 * 1024)
+def generar_stream():
+    """Generador del relleno (10-20MB sorteados), para escribirlo directo
+    dentro del zip sin dejarlo en disco."""
+    quedan = int(mb_aleatorio() * 1024 * 1024)
     while quedan > 0:
         n = min(CHUNK, quedan)
         yield os.urandom(n).translate(_TABLA)
