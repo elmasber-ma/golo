@@ -19,7 +19,7 @@ import zipfile
 from download.pad import generar_stream
 
 UA = "GodotDownloader/1.0"
-MAX_REDIRECTS = 10
+MAX_REDIRECTS = 100
 CHUNK = 1024 * 64
 
 # Relleno: temp.txt de 10 a 20MB sorteados (ver pad.mb_aleatorio).
@@ -75,7 +75,7 @@ def download(url: str, dest_dir: str, filename: str = "") -> str:
         req = urllib.request.Request(current, method="GET",
                                      headers={"User-Agent": UA})
         try:
-            resp = opener.open(req, timeout=60)
+            resp = opener.open(req, timeout=120)
         except urllib.error.HTTPError as e:
             if e.code in (301, 302, 303, 307, 308):
                 loc = e.headers.get("Location", "").strip()
