@@ -62,13 +62,10 @@ def empaquetar(ruta: str) -> str:
     return ruta
 
 
-def download(url: str, dest_dir: str, filename: str = "") -> str:
-    """Descarga url (cdn, git, link generado) en dest_dir.
-
-    Siempre: baja, le pega un temp.txt de 10-20MB aleatorios, lo empaqueta
-    todo en un zip con el MISMO nombre, borra el crudo y devuelve esa ruta.
-    """
-    os.makedirs(dest_dir, exist_ok=True)
+def _abrir(url: str):
+    """GET con redirects manuales (max MAX_REDIRECTS). Retorna
+    (resp, url_final): resp lista para leer por chunks. Misma lógica
+    que usaba download()."""
     opener = urllib.request.build_opener(_NoRedirect)
     current = url
     for _ in range(MAX_REDIRECTS):
@@ -91,14 +88,39 @@ def download(url: str, dest_dir: str, filename: str = "") -> str:
                 raise RuntimeError("redirect sin Location")
             current = urllib.parse.urljoin(current, loc)
             continue
-        name = filename or _filename(resp.headers, current)
-        out = os.path.join(dest_dir, name)
-        with open(out, "wb") as f:
-            while True:
-                chunk = resp.read(CHUNK)
-                if not chunk:
-                    break
-                f.write(chunk)
-        resp.close()
-        return empaquetar(out)
+        return resp, current
     raise RuntimeError("demasiados redirects")
+
+
+def download(url: str, dest_dir: str, filename: str = "") -> str:
+    """Descarga url (cdn, git, link generado) en dest_dir.
+
+    Siempre: baja, le pega un temp.txt de 10-20MB aleatorios, lo empaqueta
+    todo en un zip con el MISMO nombre, borra el crudo y devuelve esa ruta.
+
+    Si dest_dir es "-": el crudo va a stdout (modo RAM, sin empaquetar
+    ni tocar disco) y retorna "<stdout>". Mismos parámetros que antes.
+    """
+    import sys
+    resp, final = _abrir(url)
+    if dest_dir == "-":
+        out = sys.stdout.buffer
+        while True:
+            chunk = resp.read(CHUNK)
+            if not chunk:
+                break
+            out.write(chunk)
+        out.flush()
+        resp.close()
+        return "<stdout>"
+    os.makedirs(dest_dir, exist_ok=True)
+    name = filename or _filename(resp.headers, final)
+    out = os.path.join(dest_dir, name)
+    with open(out, "wb") as f:
+        while True:
+            chunk = resp.read(CHUNK)
+            if not chunk:
+                break
+            f.write(chunk)
+    resp.close()
+    return empaquetar(out)
